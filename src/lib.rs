@@ -70,7 +70,6 @@
 
 mod circuit_breaker;
 mod config;
-mod ema;
 mod error;
 mod failure_predicate;
 mod instrument;
@@ -78,6 +77,8 @@ mod state_machine;
 mod windowed_adder;
 
 pub mod backoff;
+/// ema
+pub mod ema;
 pub mod failure_policy;
 #[cfg(feature = "futures-support")]
 pub mod futures;
@@ -91,5 +92,5 @@ pub use self::error::Error;
 pub use self::failure_policy::FailurePolicy;
 pub use self::failure_predicate::FailurePredicate;
 pub use self::instrument::Instrument;
-pub use self::state_machine::StateMachine;
+pub use self::state_machine::{State, StateMachine};
 pub use self::windowed_adder::WindowedAdder;

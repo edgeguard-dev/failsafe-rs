@@ -18,10 +18,19 @@ const DEFAULT_SUCCESS_RATE_WINDOW_SECONDS: u64 = 30;
 const DEFAULT_CONSECUTIVE_FAILURES: u32 = 5;
 const DEFAULT_MINIMUM_REQUEST_THRESHOLD: u32 = 5;
 
+/// Decision for record_success()
+#[derive(Debug)]
+pub enum Decision {
+    /// Skip state change when on_success() is invoked
+    SkipStateChange,
+    /// Close the circuit breaker
+    Close,
+}
+
 /// A `FailurePolicy` is used to determine whether or not the backend died.
 pub trait FailurePolicy {
     /// Invoked when a request is successful.
-    fn record_success(&mut self);
+    fn record_success(&mut self) -> Option<Decision>;
 
     /// Invoked when a non-probing request fails.  If it returns `Some(Duration)`,
     /// the backend will mark as the dead for the specified `Duration`.
@@ -166,6 +175,11 @@ where
             && success_rate < self.required_success_rate
             && self.request_counter.sum() >= i64::from(self.min_request_threshold)
     }
+
+    /// Current success rate
+    pub fn success_rate(&self) -> f64 {
+        self.ema.last()
+    }
 }
 
 impl<BACKOFF> FailurePolicy for SuccessRateOverTimeWindow<BACKOFF>
@@ -173,10 +187,11 @@ where
     BACKOFF: Iterator<Item = Duration> + Clone,
 {
     #[inline]
-    fn record_success(&mut self) {
+    fn record_success(&mut self) -> Option<Decision> {
         let timestamp = self.elapsed_millis();
         self.ema.update(timestamp, SUCCESS);
         self.request_counter.add(1);
+        None
     }
 
     #[inline]
@@ -217,8 +232,9 @@ where
     BACKOFF: Iterator<Item = Duration> + Clone,
 {
     #[inline]
-    fn record_success(&mut self) {
+    fn record_success(&mut self) -> Option<Decision> {
         self.consecutive_failures = 0;
+        None
     }
 
     #[inline]
@@ -253,9 +269,10 @@ where
     RIGHT: FailurePolicy,
 {
     #[inline]
-    fn record_success(&mut self) {
+    fn record_success(&mut self) -> Option<Decision> {
         self.left.record_success();
         self.right.record_success();
+        None
     }
 
     #[inline]

@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use parking_lot::Mutex;
 
 use super::clock;
-use super::failure_policy::FailurePolicy;
+use super::failure_policy::{Decision, FailurePolicy};
 use super::instrument::Instrument;
 
 const ON_CLOSED: u8 = 0b0000_0001;
@@ -14,8 +14,8 @@ const ON_REJECTED: u8 = 0b0000_0100;
 const ON_OPEN: u8 = 0b0000_1000;
 
 /// States of the state machine.
-#[derive(Debug)]
-enum State {
+#[derive(Debug, Clone)]
+pub enum State {
     /// A closed breaker is operating normally and allowing.
     Closed,
     /// An open breaker has tripped and will not allow requests through until an interval expired.
@@ -178,6 +178,13 @@ where
         }
     }
 
+    /// Current state
+    ///
+    pub fn current_state(&self) -> State {
+        let shared = self.inner.shared.lock();
+        shared.state.clone()
+    }
+
     /// Records a successful call.
     ///
     /// This method must be invoked when a call was success.
@@ -185,11 +192,18 @@ where
         let mut instrument: u8 = 0;
         {
             let mut shared = self.inner.shared.lock();
-            if let State::HalfOpen(_) = shared.state {
-                shared.transit_to_closed();
-                instrument |= ON_CLOSED;
+            let decision = shared.failure_policy.record_success();
+            if let Some(decision) = decision {
+                if matches!(decision, Decision::Close) && !matches!(shared.state, State::Closed) {
+                    shared.transit_to_closed();
+                    instrument |= ON_CLOSED;
+                }
+            } else {
+                if let State::HalfOpen(_) = shared.state {
+                    shared.transit_to_closed();
+                    instrument |= ON_CLOSED;
+                }
             }
-            shared.failure_policy.record_success()
         }
 
         if instrument & ON_CLOSED != 0 {
