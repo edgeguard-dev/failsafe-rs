@@ -78,7 +78,8 @@ where
     BACKOFF: Iterator<Item = Duration> + Clone,
 {
     assert!(
-        (0.0..=1.0).contains(&required_success_rate) || (-1.0..=0.0).contains(&required_success_rate),
+        (0.0..=1.0).contains(&required_success_rate)
+            || (-1.0..=0.0).contains(&required_success_rate),
         "required_success_rate must be [0, 1] or [-1,0]: {}",
         required_success_rate
     );
@@ -168,10 +169,11 @@ where
     /// We can trigger failure accrual if the `window` has passed, success rate is below
     /// `required_success_rate`.
     fn can_remove(&mut self, success_rate: f64) -> bool {
-        if self.elapsed_millis() < self.window_millis ||
-            self.request_counter.sum() < i64::from(self.min_request_threshold) {
+        if self.elapsed_millis() < self.window_millis
+            || self.request_counter.sum() < i64::from(self.min_request_threshold)
+        {
             return false;
-            }
+        }
         if self.required_success_rate > 0.0 {
             success_rate < self.required_success_rate
         } else {
@@ -183,7 +185,6 @@ where
     pub fn success_rate(&self) -> f64 {
         self.ema.last()
     }
-
 }
 
 impl<BACKOFF> FailurePolicy for SuccessRateOverTimeWindow<BACKOFF>
