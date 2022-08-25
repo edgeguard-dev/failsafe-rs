@@ -18,23 +18,20 @@ const DEFAULT_SUCCESS_RATE_WINDOW_SECONDS: u64 = 30;
 const DEFAULT_CONSECUTIVE_FAILURES: u32 = 5;
 const DEFAULT_MINIMUM_REQUEST_THRESHOLD: u32 = 5;
 
-/// Decision for record_success()
-#[derive(Debug)]
-pub enum Decision {
-    /// Skip state change when on_success() is invoked
-    SkipStateChange,
-    /// Close the circuit breaker
-    Close,
-}
-
 /// A `FailurePolicy` is used to determine whether or not the backend died.
 pub trait FailurePolicy {
     /// Invoked when a request is successful.
-    fn record_success(&mut self) -> Option<Decision>;
+    fn record_success(&mut self);
+
+    /// update request result;
+    fn update(&mut self, success: bool);
 
     /// Invoked when a non-probing request fails.  If it returns `Some(Duration)`,
     /// the backend will mark as the dead for the specified `Duration`.
     fn mark_dead_on_failure(&mut self) -> Option<Duration>;
+
+    /// can transit state
+    fn can_transit(&mut self) -> bool;
 
     /// Invoked  when a backend is revived after probing. Used to reset any history.
     fn revived(&mut self);
@@ -81,8 +78,8 @@ where
     BACKOFF: Iterator<Item = Duration> + Clone,
 {
     assert!(
-        (0.0..=1.0).contains(&required_success_rate),
-        "required_success_rate must be [0, 1]: {}",
+        (0.0..=1.0).contains(&required_success_rate) || (-1.0..=0.0).contains(&required_success_rate),
+        "required_success_rate must be [0, 1] or [-1,0]: {}",
         required_success_rate
     );
 
@@ -171,15 +168,22 @@ where
     /// We can trigger failure accrual if the `window` has passed, success rate is below
     /// `required_success_rate`.
     fn can_remove(&mut self, success_rate: f64) -> bool {
-        self.elapsed_millis() >= self.window_millis
-            && success_rate < self.required_success_rate
-            && self.request_counter.sum() >= i64::from(self.min_request_threshold)
+        if self.elapsed_millis() < self.window_millis ||
+            self.request_counter.sum() < i64::from(self.min_request_threshold) {
+            return false;
+            }
+        if self.required_success_rate > 0.0 {
+            success_rate < self.required_success_rate
+        } else {
+            success_rate >= 0.0 - self.required_success_rate
+        }
     }
 
     /// Current success rate
     pub fn success_rate(&self) -> f64 {
         self.ema.last()
     }
+
 }
 
 impl<BACKOFF> FailurePolicy for SuccessRateOverTimeWindow<BACKOFF>
@@ -187,11 +191,20 @@ where
     BACKOFF: Iterator<Item = Duration> + Clone,
 {
     #[inline]
-    fn record_success(&mut self) -> Option<Decision> {
+    fn record_success(&mut self) {
         let timestamp = self.elapsed_millis();
         self.ema.update(timestamp, SUCCESS);
         self.request_counter.add(1);
-        None
+    }
+
+    fn update(&mut self, success: bool) {
+        let timestamp = self.elapsed_millis();
+        self.request_counter.add(1);
+        if success {
+            self.ema.update(timestamp, SUCCESS);
+        } else {
+            self.ema.update(timestamp, FAILURE);
+        }
     }
 
     #[inline]
@@ -207,6 +220,10 @@ where
         } else {
             None
         }
+    }
+
+    fn can_transit(&mut self) -> bool {
+        self.can_remove(self.ema.last())
     }
 
     #[inline]
@@ -232,9 +249,16 @@ where
     BACKOFF: Iterator<Item = Duration> + Clone,
 {
     #[inline]
-    fn record_success(&mut self) -> Option<Decision> {
+    fn record_success(&mut self) {
         self.consecutive_failures = 0;
-        None
+    }
+
+    fn update(&mut self, success: bool) {
+        if success {
+            self.consecutive_failures = 0;
+        } else {
+            self.consecutive_failures += 1;
+        }
     }
 
     #[inline]
@@ -254,6 +278,10 @@ where
         self.consecutive_failures = 0;
         self.backoff = self.fresh_backoff.clone();
     }
+
+    fn can_transit(&mut self) -> bool {
+        self.consecutive_failures >= self.num_failures
+    }
 }
 
 /// A combinator used for join two policies into new one.
@@ -269,10 +297,14 @@ where
     RIGHT: FailurePolicy,
 {
     #[inline]
-    fn record_success(&mut self) -> Option<Decision> {
+    fn record_success(&mut self) {
         self.left.record_success();
         self.right.record_success();
-        None
+    }
+
+    fn update(&mut self, success: bool) {
+        self.left.update(success);
+        self.right.update(success);
     }
 
     #[inline]
@@ -286,6 +318,12 @@ where
             (Some(l), Some(r)) => Some(l.max(r)),
             _ => None,
         }
+    }
+
+    fn can_transit(&mut self) -> bool {
+        let can_left = self.left.can_transit();
+        let can_right = self.right.can_transit();
+        can_left || can_right
     }
 
     #[inline]
