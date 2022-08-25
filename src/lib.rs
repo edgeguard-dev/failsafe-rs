@@ -70,7 +70,6 @@
 
 mod circuit_breaker;
 mod config;
-mod ema;
 mod error;
 mod failure_predicate;
 mod instrument;
@@ -78,6 +77,8 @@ mod state_machine;
 mod windowed_adder;
 
 pub mod backoff;
+/// ema
+pub mod ema;
 pub mod failure_policy;
 #[cfg(feature = "futures-support")]
 pub mod futures;
